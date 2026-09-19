@@ -1,11 +1,26 @@
+import os
+
+from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
+load_dotenv()
 
 COLLECTION_NAME = "siemens_documents"
 VECTOR_SIZE = 384
 
-client = QdrantClient(url="http://localhost:6333")
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+
+if QDRANT_URL and QDRANT_API_KEY:
+    client = QdrantClient(
+        url=QDRANT_URL,
+        api_key=QDRANT_API_KEY,
+    )
+else:
+    client = QdrantClient(
+        url="http://localhost:6333"
+    )
 
 
 def recreate_collection():
