@@ -599,8 +599,6 @@ This project demonstrates practical experience with:
 
 **Anuja Patade**
 
-M.Sc. Data Science — TU Dortmund University
-
 GitHub: [@anuja2024](https://github.com/anuja2024/NexaGraph)
 
 ---
@@ -622,8 +620,4 @@ Special thanks to the open-source communities behind:
 - Cross-Encoder
 - Qwen LLM
 
----
-
-## 📞 Support
-
-For issues, questions, or contributions, please open an issue or submit a pull request on GitHub.
+-
