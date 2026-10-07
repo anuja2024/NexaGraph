@@ -1,623 +1,383 @@
-# NexaGraph — Enterprise GraphRAG Knowledge Intelligence Platform
+# NexaGraph
 
-[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/release/python-312/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com/)
-[![React](https://img.shields.io/badge/React-18+-61DAFB.svg)](https://react.dev/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+### Enterprise GraphRAG Knowledge Intelligence Platform
 
-A local-first **GraphRAG (Graph Retrieval-Augmented Generation)** platform for querying enterprise documents using hybrid information retrieval, vector databases, knowledge graphs, cross-encoder reranking, and a local Large Language Model (LLM).
+> A local, open-source GraphRAG system that fuses **semantic search (Qdrant), lexical search (BM25), and graph retrieval (Neo4j)** with **Reciprocal Rank Fusion** and **cross-encoder reranking**, then generates grounded, citable answers with a **local Qwen LLM**, with no paid AI APIs.
 
-The project demonstrates an end-to-end pipeline from document ingestion to grounded question answering with source-level citations.
+[![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/React-Vite-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![Qdrant](https://img.shields.io/badge/Qdrant-Vector%20Search-DC244C)](https://qdrant.tech/)
+[![Neo4j](https://img.shields.io/badge/Neo4j-Knowledge%20Graph-4581C3?logo=neo4j&logoColor=white)](https://neo4j.com/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+[![HuggingFace](https://img.shields.io/badge/HuggingFace-Open%20Source-yellow?logo=huggingface&logoColor=white)](https://huggingface.co/)
+
+| Corpus | Chunks | Retrieval signals | Document Recall@5 | LLM |
+|:---:|:---:|:---:|:---:|:---:|
+| 5 Siemens 2025 reports | ~1,678 | Semantic + BM25 + Graph | **100%** (evaluated query set) | Local Qwen |
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
-- [Overview](#overview)
-- [Architecture](#architecture)
-- [Key Features](#key-features)
-- [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Usage](#usage)
-- [API Documentation](#api-documentation)
-- [Dataset](#dataset)
+- [Why NexaGraph?](#why-nexagraph)
+- [System Architecture](#system-architecture)
+- [Retrieval Pipeline](#retrieval-pipeline)
+- [Document Ingestion](#document-ingestion)
+- [Knowledge Corpus](#knowledge-corpus)
 - [Evaluation](#evaluation)
-- [Key Concepts](#key-concepts-demonstrated)
+- [Design Decisions](#design-decisions)
+- [Local AI](#local-ai)
+- [Frontend and Backend](#frontend-and-backend)
+- [Getting Started](#getting-started)
+- [Project Structure](#project-structure)
+- [Grounding Strategy](#grounding-strategy)
 - [Limitations](#limitations)
-- [Future Improvements](#future-improvements)
-- [Project Status](#project-status)
+- [Future Work](#future-work)
 - [Author](#author)
 
 ---
 
-## 🎯 Overview
+## Why NexaGraph?
 
-Enterprise documents often contain information distributed across multiple reports, sections, tables, and pages. A simple keyword search or vector search may retrieve relevant text but can miss relationships between entities and documents.
+A conventional RAG system is a single retrieval call:
 
-**NexaGraph** combines multiple retrieval strategies to deliver grounded, source-cited answers:
+```text
+Query -> Vector Search -> Top-K -> LLM -> Answer
+```
 
-- **Semantic vector search** → Qdrant
-- **BM25 keyword search** → Lexical retrieval
-- **Knowledge-graph retrieval** → Neo4j relationships
-- **Reciprocal Rank Fusion** → Hybrid combination
-- **Cross-encoder reranking** → Relevance optimization
-- **Local LLM generation** → Grounded answers
+That works for straightforward semantic questions. Enterprise questions are harder:
+
+> *"How did the company's digital transformation strategy affect its business segments?"*
+
+A good answer needs several kinds of evidence at once:
+
+| Need | Signal that provides it |
+|---|---|
+| Conceptual similarity ("environmental strategy" ~ "climate commitments") | Semantic retrieval |
+| Exact names, numbers, and terminology | BM25 |
+| Relationships between companies, segments, reports, metrics | Graph retrieval |
+| Information spread across documents | Rank fusion |
+| Precise final ordering of evidence | Cross-encoder reranking |
+
+NexaGraph treats retrieval as a **multi-stage information-retrieval problem**: cheap, broad candidate generation from complementary signals, followed by precise reranking, and only then generation.
 
 ---
 
-## 🏗️ Architecture
+## System Architecture
 
-### Information Retrieval Pipeline
+```mermaid
+flowchart TD
+    U["User"] --> FE["React / Vite<br/>Knowledge Interface"]
+    FE --> API["FastAPI<br/>REST API"]
 
-```
-                    Enterprise Documents
-                            |
-                            v
-                 PDF Parsing & Processing
-                            |
-                            v
-                   Section Detection
-                            |
-                            v
-                       Chunking
-                            |
-              +-------------+-------------+
-              |                           |
-              v                           v
-       Vector Embeddings             Entity Extraction
-              |                           |
-              v                           v
-           Qdrant                      Neo4j
-       Vector Database             Knowledge Graph
-              |                           |
-              +-------------+-------------+
-                            |
-                            v
-                    Hybrid Retrieval
-                            |
-                            v
-                  Reciprocal Rank Fusion
-                            |
-                            v
-                   Cross-Encoder
-                     Reranking
-                            |
-                            v
-                      Top Evidence
-                            |
-                            v
-                     Local Qwen LLM
-                            |
-                            v
-                 Grounded Final Answer
-                            |
-                            v
-                 Answer + Source Citations
-```
+    DOCS["Enterprise Documents"] --> PROC["Document Processing<br/>Extraction + Chunking"]
+    PROC --> EMB["Sentence Transformer<br/>Embeddings"]
+    EMB --> QD[("Qdrant<br/>Vector Database")]
+    PROC --> BM[("BM25<br/>Lexical Index")]
+    PROC --> N4[("Neo4j<br/>Knowledge Graph")]
 
-### Document Ingestion Pipeline
+    API --> QD
+    API --> BM
+    API --> N4
 
-```
-PDF
- |
- v
-Text Extraction
- |
- v
-Section Detection
- |
- v
-Chunking
- |
- v
-Metadata Creation
- |
- +----------------------+
- |                      |
- v                      v
-Vector Index         Graph Index
-```
+    QD --> RRF["Reciprocal Rank Fusion"]
+    BM --> RRF
+    N4 --> RRF
 
-### Question-Answering Process
-
-```
-User Question
-      |
-      v
-Query Processing
-      |
-      +------------------+
-      |                  |
-      v                  v
-   BM25              Vector Search
-      |                  |
-      +--------+---------+
-               |
-               v
-        Hybrid Retrieval
-               |
-               v
-       Graph-based Context
-               |
-               v
-        RRF Combination
-               |
-               v
-        Cross-Encoder
-          Reranking
-               |
-               v
-        Top Evidence
-               |
-               v
-          Local LLM
-               |
-               v
-      Grounded Answer
-               |
-               v
-       Source Citations
+    RRF --> CE["Cross-Encoder<br/>Reranking"]
+    CE --> CTX["Grounded Context"]
+    CTX --> LLM["Local Qwen LLM"]
+    LLM --> ANS["Grounded Answer<br/>+ Evidence + Citations"]
+    ANS --> FE
 ```
 
 ---
 
-## ✨ Key Features
+## Retrieval Pipeline
 
-### Document Processing
-- PDF text extraction and parsing
-- Automatic section detection
-- Intelligent chunking (1,678 chunks from 5 documents)
-- Metadata preservation (document ID, page number, section)
+```mermaid
+flowchart LR
+    Q["User Question"] --> QP["Query Processing"]
+    QP --> S["Qdrant<br/>Semantic Search"]
+    QP --> B["BM25<br/>Keyword Search"]
+    QP --> G["Neo4j<br/>Graph Search"]
+    S --> R["Reciprocal<br/>Rank Fusion"]
+    B --> R
+    G --> R
+    R --> C["Cross-Encoder<br/>Reranking"]
+    C --> E["Top Evidence"]
+    E --> P["Grounded Prompt"]
+    P --> L["Local Qwen LLM"]
+    L --> A["Answer + Citations"]
+```
 
-### Semantic Search
-- Multilingual embeddings: `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`
-- Vector database: Qdrant (384-dimensional embeddings)
-- Handles semantic similarity beyond keyword matching
+### 1. Semantic retrieval (Qdrant)
 
-### Keyword Retrieval
-- BM25Okapi for lexical retrieval
-- Preserves exact terminology, names, and numbers
-- Complements semantic search
+The query is embedded with a Sentence Transformer and matched against chunk embeddings. This bridges vocabulary gaps: *"company's environmental strategy"* can match *"sustainability initiatives and climate commitments"* even with no shared keywords.
 
-### Knowledge Graph
-- Entity extraction and relationship mapping
-- Neo4j graph database
-- Captures relationships between concepts
+### 2. Lexical retrieval (BM25)
 
-### Hybrid Retrieval
-- **Reciprocal Rank Fusion** combines BM25, vector, and graph results
-- Higher-ranked candidates across methods receive boost
-- Formula: `RRF(d) = Σ 1 / (k + rank(d))`
+Classical BM25 complements embeddings where they are weakest: **exact terminology, company names, technical terms, numbers, and rare domain-specific phrases**.
 
-### Reranking
-- Cross-encoder: `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`
-- Reranks candidates for relevance
-- Reduces impact of initially retrieved but less relevant chunks
+### 3. Graph retrieval (Neo4j)
 
-### Grounded Generation
-- Local LLM: `Qwen/Qwen2.5-0.5B-Instruct`
-- Uses only retrieved evidence
-- Avoids hallucinations
-- Preserves exact numbers and units
-- Returns source-level citations
+Independent text chunks lose relationships. NexaGraph maintains a knowledge graph that adds a structural retrieval signal:
+
+```mermaid
+flowchart LR
+    C["Company"] -- operates --> S["Business Segment"]
+    C -- publishes --> R["Report"]
+    R -- reports --> M["Metric"]
+    R -- discusses --> T["Topic"]
+```
+
+### 4. Reciprocal Rank Fusion (RRF)
+
+Each retriever produces its own ranking. RRF merges them into one candidate list using ranks rather than raw scores, so incomparable score scales (cosine similarity, BM25, graph) do not need calibration. It is simple, transparent, and reduces dependence on any single retriever.
+
+### 5. Cross-encoder reranking
+
+Bi-encoders and BM25 are built for fast candidate retrieval. A cross-encoder reads the **query and candidate together**, giving a more precise relevance score on the much smaller fused set.
+
+```text
+Broad retrieval -> Candidate generation -> RRF -> Cross-encoder -> High-precision context
+```
+
+### 6. Grounded generation
+
+The strongest evidence is passed to a local Qwen model, which is instructed to answer from the retrieved context rather than from pretrained knowledge. The answer is returned together with its supporting evidence.
 
 ---
 
-## 🛠️ Tech Stack
+## Document Ingestion
 
-| Component | Technology |
-|-----------|-----------|
-| **Language** | Python 3.12 |
-| **Backend** | FastAPI |
-| **Frontend** | React + Vite |
-| **Vector Database** | Qdrant |
-| **Knowledge Graph** | Neo4j |
-| **Embeddings** | FastEmbed / Sentence Transformers |
-| **Keyword Retrieval** | BM25Okapi |
-| **Reranking** | Cross-Encoder |
-| **LLM** | Qwen 2.5 |
-| **Containerization** | Docker |
-| **Testing** | pytest |
-| **Version Control** | Git / GitHub |
+```mermaid
+flowchart LR
+    A["Enterprise<br/>PDF Reports"] --> B["Text Extraction"]
+    B --> C["Cleaning"]
+    C --> D["Semantic Chunking"]
+    D --> E["Metadata"]
+    E --> F["Embeddings"]
+    F --> G[("Qdrant")]
+    E --> H[("Neo4j")]
+    E --> I[("BM25 Index")]
+```
+
+Each chunk keeps contextual metadata so downstream retrieval and evidence attribution can trace answers back to their source.
 
 ---
 
-## 📁 Project Structure
+## Knowledge Corpus
 
-```
-NexaGraph/
-|
-+-- app/
-|   |
-|   +-- evaluation/
-|   |   +-- evaluate_retrieval.py
-|   |   +-- evaluation_dataset.py
-|   |
-|   +-- graph/
-|   |   +-- entity_extractor.py
-|   |   +-- neo4j_client.py
-|   |
-|   +-- ingestion/
-|   |   +-- chunker.py
-|   |   +-- document_processor.py
-|   |   +-- pdf_parser.py
-|   |   +-- pipeline.py
-|   |   +-- section_detector.py
-|   |
-|   +-- llm/
-|   |   +-- local_llm.py
-|   |
-|   +-- retrieval/
-|   |   +-- bm25_search.py
-|   |   +-- embedding_pipeline.py
-|   |   +-- embeddings.py
-|   |   +-- index_documents.py
-|   |   +-- retriever.py
-|   |   +-- vector_search.py
-|   |   +-- vector_store.py
-|   |
-|   +-- config.py
-|   +-- main.py
-|
-+-- data/
-|   +-- raw/
-|   +-- processed/
-|
-+-- docker/
-|   +-- docker-compose.yml
-|
-+-- frontend/
-|   +-- src/
-|   +-- public/
-|   +-- package.json
-|
-+-- tests/
-|   +-- test_api.py
-|
-+-- requirements.txt
-+-- pytest.ini
-+-- .gitignore
-+-- README.md
-```
+| Item | Value |
+|---|---|
+| Source | 5 Siemens 2025 enterprise reports |
+| Ingested chunks | ~1,678 |
+
+The project deliberately uses a **real enterprise document corpus** rather than a fabricated question-answer dataset.
 
 ---
 
-## 🚀 Installation
-
-### Prerequisites
-
-- **Python 3.12+**
-- **Docker & Docker Compose** (for database services)
-- **Node.js & npm** (for frontend)
-
-### Clone Repository
-
-```bash
-git clone https://github.com/anuja2024/NexaGraph.git
-cd NexaGraph
-```
-
-### Create Virtual Environment
-
-```bash
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1  # Windows PowerShell
-# or
-source .venv/bin/activate     # Linux/macOS
-```
-
-### Install Dependencies
-
-```bash
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-```
-
----
-
-## ⚙️ Configuration
-
-### Environment Variables
-
-Create a `.env` file in the project root:
-
-```env
-# Application
-APP_NAME=NexaGraph
-APP_VERSION=1.0.0
-
-# Qdrant Vector Database
-QDRANT_HOST=localhost
-QDRANT_PORT=6333
-
-# Neo4j Knowledge Graph
-NEO4J_URI=bolt://localhost:7687
-NEO4J_USERNAME=neo4j
-NEO4J_PASSWORD=your_password
-
-# Models
-EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
-RERANKER_MODEL=cross-encoder/mmarco-mMiniLMv2-L12-H384-v1
-LLM_MODEL=Qwen/Qwen2.5-0.5B-Instruct
-```
-
-⚠️ **Never commit credentials or `.env` files to GitHub.**
-
-### Docker Services
-
-Start the database services:
-
-```bash
-docker-compose -f docker/docker-compose.yml up -d
-```
-
-**Services:**
-
-| Service | Port | Purpose |
-|---------|------|---------|
-| Qdrant | 6333 | Vector storage and similarity search |
-| Neo4j | 7474 | Graph database UI |
-| Neo4j Bolt | 7687 | Application connection |
-
----
-
-## 📖 Usage
-
-### 1. Document Ingestion
-
-Place source PDFs in `data/raw/` and run:
-
-```bash
-python -m app.ingestion.pipeline
-```
-
-The pipeline will:
-- Extract text from PDFs
-- Detect sections
-- Create chunks
-- Generate embeddings
-- Index in Qdrant
-
-### 2. Build Knowledge Graph
-
-```bash
-python -m app.graph.neo4j_client
-```
-
-This indexes document chunks and extracted entities in Neo4j.
-
-### 3. Run Backend Server
-
-```bash
-uvicorn app.main:app --reload
-```
-
-Backend runs on: `http://127.0.0.1:8000`
-
-API docs: `http://127.0.0.1:8000/docs`
-
-### 4. Run Frontend
-
-Open a new terminal:
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Frontend runs through Vite development server.
-
----
-
-## 🔌 API Documentation
-
-### Health Check
-
-```bash
-GET /health
-```
-
-**Response:**
-```json
-{
-  "status": "healthy"
-}
-```
-
-### Query Endpoint
-
-```bash
-POST /query
-```
-
-**Request:**
-```json
-{
-  "question": "Wie viele Mitarbeiter hatte Siemens zum 30. September 2025?"
-}
-```
-
-**Response:**
-```json
-{
-  "question": "Wie viele Mitarbeiter hatte Siemens zum 30. September 2025?",
-  "answer": {
-    "answer": "318.000",
-    "citations": [
-      {
-        "document": "siemens_lagebericht_2025",
-        "page": 5
-      }
-    ]
-  }
-}
-```
-
-**Interactive API Docs:** `http://127.0.0.1:8000/docs`
-
----
-
-## 📊 Dataset
-
-The demonstration corpus consists of **5 Siemens 2025 reports**:
-
-- `siemens_lagebericht_2025.pdf`
-- `siemens_konzernabschluss_2025.pdf`
-- `siemens_nachhaltigkeitsbericht_2025.pdf`
-- `siemens_verguetungsbericht_2025.pdf`
-- `siemens_aufsichtsrat_2025.pdf`
-
-### Corpus Statistics
-
-| Metric | Value |
-|--------|-------|
-| Documents | 5 |
-| Total Chunks | 1,678 |
-| Embedding Dimension | 384 |
-
-### Example Questions
-
-**German:**
-- Wie hoch waren die Umsatzerlöse von Siemens im Geschäftsjahr 2025?
-- Wie viele Mitarbeiter hatte Siemens zum 30. September 2025?
-- Welche Nachhaltigkeitsbereiche werden im Bericht genannt?
-
-**English:**
-- What was Siemens' revenue in fiscal year 2025?
-- What ROCE target is mentioned in the report?
-
----
-
-## 📈 Evaluation
-
-Retrieval quality is evaluated using a benchmark dataset in `app/evaluation/`.
-
-### Metrics
+## Evaluation
 
 | Metric | Result |
-|--------|--------|
-| Document Recall@5 | 100% |
-| Page Recall@5 | 20% |
-| Mean Reciprocal Rank (MRR) | 0.125 |
+|---|---|
+| Document Recall@5 | **100%** |
 
-### Running Evaluation
+For the evaluated query set, the correct source document appeared in the top five results.
 
-```bash
-pytest -q
+**What this does and does not show:**
+
+- It shows the multi-stage retrieval pipeline reliably surfaces the right source document for the evaluated questions.
+- It measures **retrieval**, not whether the generated answer is correct.
+- The corpus is small (five documents), so this is not an industrial-scale benchmark.
+
+### Planned evaluation
+
+Recall@1, MRR, NDCG, answer faithfulness, groundedness, citation precision/recall, hallucination rate, and latency.
+
+### Planned ablation study
+
+Quantifying what each component contributes:
+
+```text
+Vector only
+  -> + BM25
+    -> + Graph
+      -> + RRF
+        -> + Cross-encoder reranking
 ```
 
-**Test Status:** 3 passed
+---
 
-### Notes
+## Design Decisions
 
-The evaluation highlighted an important metadata consideration: reports contain both **physical PDF page numbers** and **printed report page numbers**. The current system uses physical PDF page metadata.
+| Component | Role | Why it is here |
+|---|---|---|
+| **Qdrant** (semantic) | Conceptual similarity | Finds relevant text despite different wording |
+| **BM25** | Exact terminology | Catches names, numbers, and rare terms embeddings blur |
+| **Neo4j** (graph) | Entity relationships | Surfaces connections that isolated chunks miss |
+| **RRF** | Signal fusion | Combines rankings without score calibration |
+| **Cross-encoder** | Fine-grained relevance | Precise joint query-passage scoring after cheap retrieval |
+| **Local Qwen** | Synthesis | Open-source generation with no per-request cost |
+
+Core principle: **use different retrieval mechanisms for different kinds of evidence**, and let the LLM be the final synthesis layer, not the primary source of knowledge.
 
 ---
 
-## 🎓 Key Concepts Demonstrated
+## Local AI
 
-This project demonstrates practical experience with:
+NexaGraph is designed around local, open-source components and runs without proprietary paid AI APIs.
 
-- **Retrieval-Augmented Generation (RAG)**
-- **GraphRAG Architecture**
-- **Hybrid Information Retrieval**
-- **Semantic Search & Vector Similarity**
-- **BM25 Keyword Retrieval**
-- **Vector Databases (Qdrant)**
-- **Knowledge Graphs (Neo4j)**
-- **Entity Extraction**
-- **Reciprocal Rank Fusion (RRF)**
-- **Cross-Encoder Reranking**
-- **Local LLM Inference**
-- **PDF Processing & Document Understanding**
-- **Metadata Management**
-- **FastAPI REST APIs**
-- **React Frontend Development**
-- **Docker Containerization**
-- **Automated Testing (pytest)**
-- **Retrieval Evaluation & Benchmarking**
+- No per-request API cost
+- Local inference and greater control over data
+- Reproducible experiments
+- Easy to swap in other open-source models
 
 ---
 
-## ⚠️ Limitations
+## Frontend and Backend
 
-- Entity extraction can produce noisy entities
-- Knowledge graph is based on automatically extracted entities
-- Evaluation dataset is relatively small
-- Page evaluation uses physical PDF pages (not printed report pages)
-- Local LLM is intentionally lightweight
-- Optimized for local development, not large-scale production
-- No authentication or enterprise access control
-- No conversation memory
+**Frontend** (React + Vite): a conversational interface that shows the final answer together with its supporting evidence and citations.
 
----
+**Backend** (FastAPI): exposes the full pipeline independently of the UI.
 
-## 🔮 Future Improvements
+```text
+React / Vite -> FastAPI -> Query processing
+                           ├── Qdrant retrieval
+                           ├── BM25 retrieval
+                           ├── Neo4j retrieval
+                           ├── RRF
+                           ├── Cross-encoder reranking
+                           └── Local LLM generation
+```
 
-- [ ] Improved entity normalization
-- [ ] Better relationship extraction
-- [ ] Separate physical and printed page metadata
-- [ ] Larger retrieval evaluation benchmark
-- [ ] Advanced graph traversal strategies
-- [ ] Query classification
-- [ ] Conversation memory
-- [ ] Document-level access control
-- [ ] Enterprise authentication
-- [ ] Production deployment guidelines
-- [ ] Monitoring and retrieval analytics
-- [ ] Larger local LLMs
-- [ ] Multilingual query expansion
+### Deployment
 
----
+Docker Compose makes the stack (frontend, FastAPI, Qdrant, Neo4j, models) reproducible.
 
-## ✅ Project Status
-
-| Component | Status |
-|-----------|--------|
-| Document ingestion | ✓ |
-| PDF processing | ✓ |
-| Chunking | ✓ |
-| Vector indexing | ✓ |
-| BM25 retrieval | ✓ |
-| Neo4j graph | ✓ |
-| Hybrid retrieval | ✓ |
-| RRF ranking | ✓ |
-| Cross-encoder reranking | ✓ |
-| Local LLM generation | ✓ |
-| FastAPI backend | ✓ |
-| React frontend | ✓ |
-| Source citations | ✓ |
-| Retrieval evaluation | ✓ |
-| Automated tests | ✓ |
+```mermaid
+flowchart LR
+    B["Browser"] --> F["React / Vite"]
+    F --> A["FastAPI Container"]
+    A --> Q[("Qdrant")]
+    A --> N[("Neo4j")]
+    A --> X[("BM25 Index")]
+    A --> E["Sentence Transformer"]
+    A --> R["Cross-Encoder"]
+    A --> L["Local Qwen"]
+```
 
 ---
 
-## 👤 Author
+## Getting Started
 
-**Anuja Patade**
+> Replace the placeholders below with your exact commands and entry points.
 
-GitHub: [@anuja2024](https://github.com/anuja2024/NexaGraph)
+```bash
+git clone https://github.com/anuja2024/<repo-name>.git
+cd <repo-name>
+
+# Start Qdrant, Neo4j, backend, and frontend
+docker compose up --build
+```
+
+| Service | URL |
+|---|---|
+| Frontend | `http://localhost:<port>` |
+| Backend API docs | `http://localhost:8000/docs` |
+| Qdrant | `http://localhost:6333` |
+| Neo4j Browser | `http://localhost:7474` |
+
+Then ingest your documents and ask a question through the UI or the API.
 
 ---
 
-## 📄 License
+## Project Structure
 
-This project is licensed under the MIT License — see the LICENSE file for details.
+```text
+NexaGraph/
+├── backend/
+│   ├── api/
+│   ├── ingestion/
+│   ├── retrieval/
+│   ├── reranking/
+│   ├── generation/
+│   ├── graph/
+│   └── evaluation/
+├── frontend/
+│   └── src/ (components, services)
+├── data/
+├── docker/
+├── tests/
+├── docker-compose.yml
+├── requirements.txt
+└── README.md
+```
 
 ---
 
-## 🙌 Acknowledgments
+## Grounding Strategy
 
-Special thanks to the open-source communities behind:
-- FastAPI
-- React
-- Qdrant
-- Neo4j
-- Sentence Transformers
-- Cross-Encoder
-- Qwen LLM
+NexaGraph is **retrieval-first**:
 
--
+```text
+Knowledge base -> Retrieval -> Ranking -> Evidence -> LLM        (NexaGraph)
+LLM -> guess                                                     (what it avoids)
+```
+
+This reduces reliance on unsupported model knowledge and makes each answer easier to inspect.
+
+### End-to-end example
+
+For *"What are the company's major strategic priorities?"*:
+
+1. Embed the query
+2. Semantic search in Qdrant, keyword search with BM25, graph retrieval in Neo4j
+3. Fuse the three rankings with RRF
+4. Rerank candidates with the cross-encoder
+5. Select top evidence and build a grounded prompt
+6. Generate with local Qwen
+7. Return the answer with supporting evidence
+
+---
+
+## Limitations
+
+NexaGraph is a research and portfolio system, not a production enterprise platform.
+
+1. The corpus contains only five enterprise reports.
+2. Retrieval evaluation uses a limited query set, not an industrial-scale benchmark.
+3. Document Recall@5 measures retrieval only and does not guarantee answer correctness.
+4. Graph quality depends on the entity and relationship extraction pipeline.
+5. The knowledge graph is domain-specific.
+6. The local LLM can still produce incorrect or incomplete answers.
+7. A citation does not guarantee factual correctness.
+8. Production use would need authentication, access control, observability, and security hardening.
+
+---
+
+## Future Work
+
+- **Retrieval:** adaptive retrieval, query expansion, multi-query retrieval, learned fusion
+- **GraphRAG:** richer entity and relation extraction, graph traversal strategies, community detection, graph-aware reranking, temporal graphs
+- **Generation:** stronger local LLMs, structured outputs, answer and citation verification, hallucination detection
+- **Evaluation:** MRR, NDCG, faithfulness, citation accuracy, latency benchmarks, retrieval ablations
+- **Production:** authentication, RBAC, document-level permissions, observability, caching, async ingestion, CI/CD
+
+---
+
+## Author
+
+**Anuja Patade**, M.Sc. Data Science, TU Dortmund University
+
+Interests: machine learning, generative AI, retrieval-augmented generation, GraphRAG, information retrieval, multimodal AI, computer vision, enterprise AI
+
+GitHub: [@anuja2024](https://github.com/anuja2024)
+
+---
+
+<p align="center">
+<b>NexaGraph</b> = Semantic + Lexical + Graph Retrieval, fused, reranked, and grounded in local generation
+</p>
